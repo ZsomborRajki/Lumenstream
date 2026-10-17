@@ -6,9 +6,14 @@ protocol itself on top of Network framework's `NetworkConnection<TCP>`.
 
 > ⚠️ The IB documentation page (interactivebrokers.com/docs/tws-api) returned HTTP 403
 > while this plan was written. Message IDs, field layouts and `MIN_SERVER_VER_*`
-> constants come from knowledge of the reference clients (Python/Java `ibapi`). Every
-> item marked **[verify]** must be checked against the current docs or the official
-> `ibapi` source before that phase ships.
+> constants come from the reference clients (Python/Java `ibapi`). Every item marked
+> **[verify]** must be checked against the current docs or the official `ibapi` source
+> before that phase ships.
+>
+> M1 checked everything IBKit decodes so far (error, contract data, contract data end,
+> `reqContractDetails`, `startApi`, every version constant in `IBServerVersion`) against
+> a recent copy of the official `pythonclient` (protobuf era, `MIN_SERVER_VER_PROTOBUF = 201`).
+> That caught one bug: `ENCODE_MSG_ASCII7` is 153, not 161.
 
 ## 1. How the protocol works
 
@@ -36,7 +41,7 @@ protocol itself on top of Network framework's `NetworkConnection<TCP>`.
 ### Version strategy
 
 `IBServerVersion.clientMaximum` is pinned at **176**, deliberately below the
-protobuf-era server versions (~201+ **[verify]**), where newer TWS builds switch many
+protobuf-era server versions (201+, verified), where newer TWS builds switch many
 messages to protobuf payloads. Advertising a lower max makes the server negotiate the
 classic text protocol, so IBKit only has to support one well-understood layout.
 
@@ -70,10 +75,30 @@ Rules:
   `swift test` on macOS.
 - Decoding happens **off the main actor**. The main actor only receives small,
   already-decoded `Sendable` events.
-- **Request/response correlation** (Phase 2): a `RequestRegistry` inside
-  `IBConnection` hands out request IDs and maps them to `AsyncThrowingStream`
-  continuations, so callers write `for try await tick in ib.marketData(for: contract)`
-  and cancelling the task sends the matching `cancelMktData` automatically.
+- **Request/response correlation** (Phase 2): `IBRequestRegistry` hands out request IDs
+  and maps them to `AsyncThrowingStream` continuations. It sits behind a `Mutex`, not
+  an actor, so the read loop routes responses without hopping executors. Callers write
+  `for try await tick in ib.marketData(for: contract)`, and leaving the loop early sends
+  the matching cancel request (e.g. `cancelMktData`) automatically. One-shot requests fail with
+  `connectionClosed` when their socket drops; streaming requests are replayed under the
+  same ID on the next socket, and after notice 1101.
+- **Session supervision:** `IBConnection.sessions(to:policy:)` wraps `connect` in a
+  reconnect loop with exponential backoff (`IBReconnectPolicy`: 1 s doubling to 30 s,
+  reset after a 30 s healthy session). The first connection is not retried, so a typo
+  fails right away. Client-ID collisions (326) stop retrying. TCP keepalive (20 s idle,
+  3 × 5 s probes) catches a TWS host that disappears without closing the socket.
+
+### `NetworkConnection` behaviour (measured on macOS 27 / Xcode 27.1)
+- **Nothing listening:** the connection parks in `waiting(ECONNREFUSED)`, and `send`
+  suspends until its task is cancelled. `TCP.connectionTimeout` doesn't help. IBKit races
+  the handshake against the state stream and a 10 s timeout.
+- **Peer closes:** the next `receive(exactly:)` returns **empty content** instead of
+  throwing, and only the read after that throws (`ENOMSG`). `receive(as: UInt32.self)`
+  at end of stream **traps** (`UnsafeRawBufferPointer.load out of bounds`), so frame
+  headers are read as bytes and every short read is treated as a close.
+- **Cancellation:** a pending `receive` returns empty content when its task is
+  cancelled. It honours cancellation, but you have to check for it yourself.
+- `send` on a fresh connection starts it; no explicit `start()` needed.
 
 ## 3. Phases
 
@@ -83,16 +108,17 @@ Rules:
 - [x] Decode `nextValidId`, `managedAccounts`, `currentTime`, error/notice
 - [x] `LumenstreamModel.connect(to:)` / `disconnect()`, connection status badge
 - [x] Swift Testing suites for wire format and decoders
-- [ ] **Smoke test against TWS paper.** Confirm `NetworkConnection` starts on first
-      send, that `receive` honours task cancellation, and what happens on TWS restart
-- [ ] **[verify]** `MIN_SERVER_VER_ERROR_TIME` (194) and `ADVANCED_ORDER_REJECT` (166)
+- [x] `NetworkConnection` behaviour on refusal, peer close and cancellation (see above),
+      plus TWS-restart handling, covered by `IBTestServer` loopback tests
+- [ ] **Smoke test against TWS paper** (manual: connect, accounts, notices, restart TWS)
+- [x] Verified `ERROR_TIME` (194), `ADVANCED_ORDER_REJECT` (166); fixed `ENCODE_MSG_ASCII7` (153)
 - [ ] Record real handshake/bootstrap frames as test fixtures (`Tests/Fixtures/*.bin`)
 
-### Phase 2: Request plumbing
-- [ ] `RequestRegistry` (ID allocation, per-request continuations, auto-cancel on termination)
-- [ ] `IBContract` value type + encoder (conId, symbol, secType, exchange, primaryExchange, currency)
-- [ ] `reqContractDetails` → resolve `WatchlistSymbol.contractID`
-- [ ] Reconnect policy: exponential backoff, resubscribe active requests, surface
+### Phase 2: Request plumbing ✅
+- [x] `IBRequestRegistry` (ID allocation, per-request continuations, auto-cancel on termination)
+- [x] `IBContract` value type + encoder (conId, symbol, secType, exchange, primaryExchange, currency)
+- [x] `reqContractDetails` → resolve `WatchlistSymbol.contractID`
+- [x] Reconnect policy: exponential backoff, resubscribe active requests, surface
       1100/1101/1102 connectivity notices as `ConnectionState`
 
 ### Phase 3: Market data (Watchlist)
@@ -101,6 +127,9 @@ Rules:
 - [ ] Map tick types (1 bid, 2 ask, 4 last, 9 close, 66–75 delayed equivalents) into `Quote`
 - [ ] Coalesce ticks: the read loop batches updates per display frame before
       hopping to the main actor, so a burst of 200 ticks costs one hop, not 200
+      (candidate: `AsyncAlgorithms`' `chunked(by: .repeating(every:))`)
+- [ ] Market data is the first real streaming request: pass `isStreaming: true` and a
+      `cancelMktData` factory to `IBConnection.responses(to:cancel:isStreaming:)`
 - [ ] Market-data line budget: subscribe only to visible rows (`onScrollVisibilityChange`)
 
 ### Phase 4: Account & portfolio
@@ -124,8 +153,10 @@ Rules:
 ## 4. Testing strategy
 - **Unit (Swift Testing, `swift test`):** encoders/decoders against hand-built payloads
   and recorded fixtures; parameterised tests across server versions.
-- **Loopback integration:** an `IBTestServer` built on `NetworkListener<TCP>` that
-  replays fixture conversations, so the full actor and model can be tested with no TWS running.
+- **Loopback integration:** `IBTestServer` (in `Tests/IBKitTests/Support`) is a scripted
+  fake TWS on `NetworkListener<TCP>`, bound to 127.0.0.1 with an ephemeral port, so the
+  full actor can be tested with no TWS running: handshake, request routing, error notices,
+  socket drops, timeouts, client-ID collisions and a mid-session restart.
 - **Manual:** TWS paper account on the Mac, app in the simulator via `127.0.0.1:7497`.
 - **Demo mode:** a `DemoFeed` that emits synthetic `IBEvent`s (random-walk quotes),
   used for previews, screenshots and showing the app off without an IB login.

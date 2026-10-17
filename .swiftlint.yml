@@ -1,0 +1,143 @@
+# SwiftLint configuration. Run `swiftlint` from the repository root; the app
+# target also runs it as a build phase.
+#
+# Strict: every violation is an error, so the build and the linter agree that
+# a clean tree has zero findings. Opt-in rules are chosen individually rather
+# than via `all`, leaving out rules that contradict each other or the code's
+# idiom (one-line `case .x: value` switches, `@Test func` on one line,
+# implicit ACLs, wire-protocol literals, grouping extensions).
+strict: true
+
+included:
+  - Lumenstream
+  - Packages/LumenstreamKit/Sources
+  - Packages/LumenstreamKit/Tests
+  - Packages/LumenstreamKit/Package.swift
+
+excluded:
+  - Packages/LumenstreamKit/.build
+
+opt_in_rules:
+  # Correctness
+  - async_without_await
+  - discarded_notification_center_observer
+  - fatal_error_message
+  - force_unwrapping
+  - identical_operands
+  - implicitly_unwrapped_optional
+  - incompatible_concurrency_annotation
+  - lower_acl_than_parent
+  - overridden_super_call
+  - private_swiftui_state
+  - unavailable_function
+  - unhandled_throwing_task
+  - unowned_variable_capture
+  - unused_parameter
+  - yoda_condition
+  # Idiomatic Swift
+  - array_init
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - convenience_type
+  - direct_return
+  - discouraged_assert
+  - discouraged_none_name
+  - discouraged_object_literal
+  - discouraged_optional_boolean
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - explicit_init
+  - fallthrough
+  - first_where
+  - flatmap_over_map_reduce
+  - implicit_return
+  - joined_default_parameter
+  - last_where
+  - legacy_multiple
+  - legacy_objc_type
+  - non_overridable_class_declaration
+  - optional_enum_case_matching
+  - pattern_matching_keywords
+  - prefer_condition_list
+  - prefer_key_path
+  - prefer_self_in_static_references
+  - prefer_self_type_over_type_of_self
+  - prefer_zero_over_explicit_init
+  - reduce_into
+  - redundant_final
+  - redundant_nil_coalescing
+  - redundant_self
+  - redundant_type_annotation
+  - return_value_from_void_function
+  - self_binding
+  - shorthand_optional_binding
+  - sorted_first_last
+  - static_operator
+  - superfluous_else
+  - toggle_bool
+  - unneeded_throws_rethrows
+  # Accessibility
+  - accessibility_label_for_image
+  - accessibility_trait_for_button
+  # Formatting
+  - anonymous_argument_in_multiline_closure
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - comma_inheritance
+  - expiring_todo
+  - file_name_no_space
+  - indentation_width
+  - let_var_whitespace
+  - literal_expression_end_indentation
+  - local_doc_comment
+  - modifier_order
+  - multiline_arguments
+  - multiline_literal_brackets
+  - multiline_parameters
+  - number_separator
+  - operator_usage_whitespace
+  - period_spacing
+  - sorted_imports
+  - unneeded_parentheses_in_closure_argument
+  - vertical_parameter_alignment_on_call
+  - vertical_whitespace_closing_braces
+  - vertical_whitespace_opening_braces
+
+# Need type-checked compiler logs: `swiftlint analyze --compiler-log-path <xcodebuild log>`.
+analyzer_rules:
+  - capture_variable
+  - typesafe_array_init
+  - unused_declaration
+  - unused_import
+
+trailing_comma:
+  # Multi-line collections end with a comma, so additions are one-line diffs.
+  mandatory_comma: true
+
+line_length:
+  warning: 160
+  ignores_comments: true
+  ignores_urls: true
+
+indentation_width:
+  indentation_width: 4
+  include_comments: false
+
+number_separator:
+  # Five-digit TWS error codes (10167) read better without separators.
+  minimum_length: 6
+
+identifier_name:
+  excluded:
+    - id
+
+type_body_length:
+  warning: 300
+
+file_length:
+  warning: 500
+  ignore_comment_only_lines: true

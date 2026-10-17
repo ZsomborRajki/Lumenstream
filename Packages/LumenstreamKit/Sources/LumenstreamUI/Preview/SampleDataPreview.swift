@@ -13,7 +13,7 @@ public struct SampleDataPreview: PreviewModifier {
 
     public init() {}
 
-    public static func makeSharedContext() async throws -> Context {
+    public static func makeSharedContext() throws -> Context {
         Context(container: try LumenstreamDataContainer.make(inMemory: true), model: .preview())
     }
 

@@ -37,6 +37,13 @@ public struct IBMessageDecoder: Sendable {
         case .errorMessage:
             return .notice(try decodeNotice(&reader))
 
+        case .contractData:
+            return try decodeContractDetails(&reader)
+
+        case .contractDataEnd:
+            try reader.skip()
+            return .contractDetailsEnd(requestID: try reader.int())
+
         default:
             return .unhandled(messageID: rawID, fields: Array(reader.remaining))
         }
@@ -61,6 +68,56 @@ public struct IBMessageDecoder: Sendable {
             advancedOrderRejectJSON: rejectJSON.isEmpty ? nil : rejectJSON,
             time: timeMillis.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
         )
+    }
+
+    /// Reads the fields up to the primary exchange. Everything after (trading
+    /// hours, industry, sec ID list, …) is ignored; each message is its own frame.
+    private func decodeContractDetails(_ reader: inout IBFieldReader) throws(IBProtocolError) -> IBEvent {
+        var version = 8
+        if serverVersion < .sizeRules {
+            version = try reader.int()
+        }
+        let requestID = version >= 3 ? try reader.int() : -1
+        var contract = IBContract(symbol: try reader.string(), securityType: try reader.string(), exchange: "", currency: "")
+        try reader.skip() // lastTradeDateOrContractMonth
+        if serverVersion >= .lastTradeDate {
+            try reader.skip() // lastTradeDate
+        }
+        try reader.skip() // strike
+        try reader.skip() // right
+        contract.exchange = try reader.string()
+        contract.currency = try reader.string()
+        contract.localSymbol = try reader.string()
+        let marketName = try reader.string()
+        contract.tradingClass = try reader.string()
+        contract.contractID = try reader.int()
+        let minimumTick = try reader.double()
+        if serverVersion >= .mdSizeMultiplier, serverVersion < .sizeRules {
+            try reader.skip() // mdSizeMultiplier, unused
+        }
+        contract.multiplier = try reader.string()
+        try reader.skip() // orderTypes
+        let validExchanges = try reader.string().split(separator: ",").map(String.init)
+        let priceMagnifier = try reader.int()
+        if version >= 4 {
+            try reader.skip() // underConId
+        }
+        var longName = ""
+        if version >= 5 {
+            let rawLongName = try reader.string()
+            longName = serverVersion >= .encodeMessageASCII7 ? Self.unescapingUnicode(rawLongName) : rawLongName
+            contract.primaryExchange = try reader.string()
+        }
+
+        let details = IBContractDetails(
+            contract: contract,
+            marketName: marketName,
+            longName: longName,
+            minimumTick: minimumTick,
+            priceMagnifier: priceMagnifier,
+            validExchanges: validExchanges
+        )
+        return .contractDetails(requestID: requestID, details)
     }
 
     /// Reverses TWS's ASCII-7 encoding: every `\uXXXX` becomes that UTF-16 code unit

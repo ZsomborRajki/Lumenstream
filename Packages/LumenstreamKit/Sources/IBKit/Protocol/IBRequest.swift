@@ -3,8 +3,8 @@ import Foundation
 /// A message the client can send. Each case knows how to encode itself for a
 /// given negotiated ``IBServerVersion``.
 ///
-/// Phase 1 covers the session bootstrap; market data, account and historical
-/// requests are added in later phases (see Docs/IBIntegration.md).
+/// Covers the session bootstrap and contract lookup; market data, account and
+/// historical requests are added in later phases (see Docs/IBIntegration.md).
 public enum IBRequest: Sendable, Hashable {
     /// Sent once, right after the version handshake.
     case startAPI(clientID: Int, optionalCapabilities: String = "")
@@ -12,6 +12,8 @@ public enum IBRequest: Sendable, Hashable {
     case requestManagedAccounts
     case requestIDs(count: Int = 1)
     case requestMarketDataType(IBMarketDataType)
+    /// Answered by one `contractData` per match, then `contractDataEnd`.
+    case requestContractDetails(requestID: Int, contract: IBContract)
 
     public func payload(for serverVersion: IBServerVersion) -> Data {
         var writer = IBFieldWriter()
@@ -35,6 +37,11 @@ public enum IBRequest: Sendable, Hashable {
             writer.append(IBOutboundMessageID.requestMarketDataType)
             writer.append(1)
             writer.append(type.rawValue)
+        case let .requestContractDetails(requestID, contract):
+            writer.append(IBOutboundMessageID.requestContractData)
+            writer.append(8)
+            writer.append(requestID)
+            contract.encodeForContractDetails(into: &writer, serverVersion: serverVersion)
         }
         return writer.payload
     }

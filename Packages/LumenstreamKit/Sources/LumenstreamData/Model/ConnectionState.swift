@@ -8,10 +8,28 @@ nonisolated public enum ConnectionState: Sendable, Equatable {
     case disconnected
     case connecting
     case connected(serverVersion: Int)
+    /// The API socket is up, but TWS lost its own link to IB's servers
+    /// (notice 1100). Data resumes by itself once TWS reconnects.
+    case brokerUnreachable(serverVersion: Int)
+    /// The socket dropped (TWS restarted, Mac asleep, network change). The next
+    /// attempt starts at `retryAt`.
+    case reconnecting(attempt: Int, retryAt: Date, reason: String)
     case failed(String)
 
+    /// Whether requests can be sent right now.
     public var isConnected: Bool {
-        if case .connected = self { true } else { false }
+        switch self {
+        case .connected, .brokerUnreachable: true
+        default: false
+        }
+    }
+
+    /// Whether a session is open or being worked on, i.e. there is something to disconnect.
+    public var isActive: Bool {
+        switch self {
+        case .disconnected, .failed: false
+        default: true
+        }
     }
 }
 

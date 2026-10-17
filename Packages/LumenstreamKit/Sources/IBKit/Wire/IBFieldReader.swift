@@ -8,9 +8,10 @@ public struct IBFieldReader: Sendable {
     public init(payload: Data) {
         var fields = payload
             .split(separator: 0, omittingEmptySubsequences: false)
-            .map { String(decoding: $0, as: UTF8.self) }
+            // Like the reference client, fall back to Latin-1 for bytes that aren't UTF-8.
+            .map { String(bytes: $0, encoding: .utf8) ?? String(bytes: $0, encoding: .isoLatin1) ?? "" }
         // Every field is NUL-terminated, so splitting leaves one empty tail element.
-        if fields.last == "" { fields.removeLast() }
+        if fields.last?.isEmpty == true { fields.removeLast() }
         self.fields = fields
     }
 

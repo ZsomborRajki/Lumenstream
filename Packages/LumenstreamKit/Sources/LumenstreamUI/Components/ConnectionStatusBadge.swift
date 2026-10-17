@@ -15,7 +15,7 @@ public struct ConnectionStatusBadge: View {
                 .contentTransition(.interpolate)
         } icon: {
             Image(systemName: symbol)
-                .symbolEffect(.pulse, isActive: state == .connecting)
+                .symbolEffect(.pulse, isActive: isWorking)
                 .contentTransition(.symbolEffect(.replace))
         }
         .font(.footnote.weight(.semibold))
@@ -25,11 +25,20 @@ public struct ConnectionStatusBadge: View {
         .animation(.smooth, value: state)
     }
 
+    private var isWorking: Bool {
+        switch state {
+        case .connecting, .reconnecting: true
+        default: false
+        }
+    }
+
     private var title: LocalizedStringKey {
         switch state {
         case .disconnected: "Offline"
         case .connecting: "Connecting"
         case let .connected(version): "Live · v\(version)"
+        case .brokerUnreachable: "IB Unreachable"
+        case .reconnecting: "Reconnecting"
         case .failed: "Failed"
         }
     }
@@ -39,6 +48,8 @@ public struct ConnectionStatusBadge: View {
         case .disconnected: "bolt.horizontal.circle"
         case .connecting: "antenna.radiowaves.left.and.right"
         case .connected: "bolt.horizontal.circle.fill"
+        case .brokerUnreachable: "icloud.slash"
+        case .reconnecting: "arrow.trianglehead.2.clockwise"
         case .failed: "exclamationmark.triangle.fill"
         }
     }
@@ -46,8 +57,9 @@ public struct ConnectionStatusBadge: View {
     private var tint: Color {
         switch state {
         case .disconnected: .gray
-        case .connecting: .yellow
+        case .connecting, .reconnecting: .yellow
         case .connected: .green
+        case .brokerUnreachable: .orange
         case .failed: .red
         }
     }
@@ -58,6 +70,8 @@ public struct ConnectionStatusBadge: View {
         ConnectionStatusBadge(state: .disconnected)
         ConnectionStatusBadge(state: .connecting)
         ConnectionStatusBadge(state: .connected(serverVersion: 176))
+        ConnectionStatusBadge(state: .brokerUnreachable(serverVersion: 176))
+        ConnectionStatusBadge(state: .reconnecting(attempt: 2, retryAt: .now + 4, reason: "TWS closed the connection"))
         ConnectionStatusBadge(state: .failed("Refused"))
     }
     .padding()
