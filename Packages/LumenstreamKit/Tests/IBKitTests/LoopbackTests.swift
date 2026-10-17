@@ -107,6 +107,54 @@ struct LoopbackTests {
         }
     }
 
+    @Test func undecodableResponseFailsTheCallButKeepsTheSocket() async throws {
+        let server = try await IBTestServer { peer, _ in
+            try await peer.acceptHandshake()
+            let garbled = try await peer.readFields()
+            try await peer.send("10", garbled[2], "AAPL") // truncated contractData
+            let request = try await peer.readFields()
+            var data = Self.appleData
+            data[1] = request[2]
+            try await peer.send(fields: data)
+            try await peer.send("52", "1", request[2])
+            await peer.hold()
+        }
+        let connection = IBConnection()
+        let session = try await Self.open(connection, to: server.endpoint)
+        defer { session.cancel() }
+
+        await #expect(throws: IBProtocolError.self) {
+            try await connection.contractDetails(for: .stock("AAPL"))
+        }
+        let matches = try await connection.contractDetails(for: .stock("AAPL"))
+        #expect(matches.map(\.contract.contractID) == [265_598])
+        #expect(server.acceptedCount == 1)
+        await connection.disconnect()
+    }
+
+    @Test func resumedSessionRetriesTheFirstConnection() async throws {
+        let server = try await IBTestServer { peer, index in
+            if index == 0 { return } // still restarting: drop before the handshake
+            try await peer.acceptHandshake()
+            await peer.hold()
+        }
+        var policy = Self.fast
+        policy.retriesFirstConnection = true
+        let connection = IBConnection(handshakeTimeout: .seconds(2))
+
+        var log: [String] = []
+        for try await event in await connection.sessions(to: server.endpoint, policy: policy) {
+            switch event {
+            case .connected: log.append("connected")
+            case let .reconnecting(attempt, _, _): log.append("reconnecting \(attempt)")
+            default: continue
+            }
+            if case .connected = event { break }
+        }
+        #expect(log == ["reconnecting 1", "connected"])
+        await connection.disconnect()
+    }
+
     @Test func refusedConnectionFailsFast() async throws {
         let clock = ContinuousClock()
         let started = clock.now

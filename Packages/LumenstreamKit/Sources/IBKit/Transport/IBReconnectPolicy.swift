@@ -12,19 +12,24 @@ public struct IBReconnectPolicy: Sendable, Hashable {
     public var maximumAttempts: Int?
     /// A session that stayed up this long counts as healthy, and resets the backoff.
     public var stableSessionDuration: Duration
+    /// Whether a failed first connection is retried too. Off by default so a wrong
+    /// host or port fails right away; on when resuming a session that was reconnecting.
+    public var retriesFirstConnection: Bool
 
     public init(
         initialDelay: Duration = .seconds(1),
         maximumDelay: Duration = .seconds(30),
         multiplier: Double = 2,
         maximumAttempts: Int? = nil,
-        stableSessionDuration: Duration = .seconds(30)
+        stableSessionDuration: Duration = .seconds(30),
+        retriesFirstConnection: Bool = false
     ) {
         self.initialDelay = initialDelay
         self.maximumDelay = maximumDelay
         self.multiplier = multiplier
         self.maximumAttempts = maximumAttempts
         self.stableSessionDuration = stableSessionDuration
+        self.retriesFirstConnection = retriesFirstConnection
     }
 
     public static let standard = Self()
@@ -43,7 +48,7 @@ public struct IBReconnectPolicy: Sendable, Hashable {
 
 extension Duration {
     /// The duration as fractional seconds.
-    var seconds: Double {
+    public var seconds: Double {
         let (seconds, attoseconds) = components
         return Double(seconds) + Double(attoseconds) / 1e18
     }

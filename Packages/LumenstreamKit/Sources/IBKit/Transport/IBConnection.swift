@@ -119,7 +119,9 @@ public actor IBConnection {
     /// `policy` and connects again, emitting ``IBEvent/reconnecting(attempt:delay:reason:)``
     /// in between and ``IBEvent/connected(serverVersion:connectionTime:)`` for every new socket.
     ///
-    /// The first connection is not retried, so a wrong host or port fails right away.
+    /// The first connection is not retried, so a wrong host or port fails right away,
+    /// unless `policy` sets ``IBReconnectPolicy/retriesFirstConnection`` (for resuming
+    /// a session that was already reconnecting).
     /// The stream throws once retrying stops, either because the policy gave up or
     /// because retrying cannot help (client ID in use). Ending iteration disconnects.
     /// A newer call to `sessions` or ``disconnect()`` supersedes this one.
@@ -153,7 +155,7 @@ public actor IBConnection {
         into continuation: AsyncThrowingStream<IBEvent, any Error>.Continuation
     ) async {
         var attempt = 0
-        var hasConnected = false
+        var hasConnected = policy.retriesFirstConnection
         while !Task.isCancelled {
             let failure: any Error
             do {
@@ -215,8 +217,10 @@ public actor IBConnection {
         try await connection.send(IBFrame.encode(request.payload(for: serverVersion)))
     }
 
-    /// Looks up every contract matching `contract`. An empty result means TWS
-    /// knows no such instrument; ambiguous queries return several matches.
+    /// Looks up every contract matching `contract`. Ambiguous queries return several
+    /// matches. TWS answers an unknown instrument with error 200, which throws
+    /// ``IBProtocolError/requestFailed(code:message:)``. Throws `CancellationError`
+    /// when the calling task is cancelled, rather than returning a partial list.
     public func contractDetails(for contract: IBContract) async throws -> [IBContractDetails] {
         let responses = try await responses { .requestContractDetails(requestID: $0, contract: contract) }
         var matches: [IBContractDetails] = []
@@ -225,6 +229,9 @@ public actor IBConnection {
                 matches.append(details)
             }
         }
+        // A cancelled consumer ends iteration early without an error; don't pass
+        // off the matches received so far as the complete answer.
+        try Task.checkCancellation()
         return matches
     }
 
@@ -390,7 +397,19 @@ private struct SessionReader: Sendable {
         do {
             while true {
                 try Task.checkCancellation()
-                let event = try decoder.decode(try await IBConnection.readFrame(from: connection))
+                let payload = try await IBConnection.readFrame(from: connection)
+                let event: IBEvent
+                do {
+                    event = try decoder.decode(payload)
+                } catch {
+                    // Frames are length-prefixed, so one message IBKit can't decode doesn't
+                    // desync the stream: pass it on raw instead of dropping the socket.
+                    // It may have answered a pending one-shot request, which would then
+                    // never complete, so fail those (there are no request timeouts).
+                    registry.socketClosed(session: session, error: error)
+                    continuation.yield(Self.undecodable(payload))
+                    continue
+                }
                 if registry.route(event) { continue }
                 continuation.yield(event)
 
@@ -400,7 +419,8 @@ private struct SessionReader: Sendable {
                     throw IBProtocolError.clientIDInUse(clientID)
                 }
                 if notice.connectivity == .restored(dataLost: true) {
-                    await onSubscriptionsLost()
+                    // Off the read loop: replaying waits on the outbound rate limit.
+                    Task { await onSubscriptionsLost() }
                 }
             }
         } catch is CancellationError {
@@ -410,6 +430,11 @@ private struct SessionReader: Sendable {
             registry.socketClosed(session: session, error: error)
             continuation.finish(throwing: error)
         }
+    }
+
+    private static func undecodable(_ payload: Data) -> IBEvent {
+        let fields = IBFieldReader(payload: payload).fields
+        return .unhandled(messageID: fields.first.flatMap { Int($0) } ?? -1, fields: Array(fields.dropFirst()))
     }
 }
 

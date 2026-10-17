@@ -43,6 +43,10 @@ public final class LumenstreamModel {
     public func connect(to profile: ConnectionProfile) {
         guard let port = UInt16(exactly: profile.port), port > 0 else {
             disconnect()
+            // Nothing to retry: clear the previous profile so the status view
+            // doesn't offer a "Try Again" for it.
+            activeProfileID = nil
+            activeProfileName = nil
             connectionState = .failed("Invalid port \(profile.port)")
             return
         }
@@ -64,8 +68,12 @@ public final class LumenstreamModel {
 
     /// Skips the remaining backoff and reconnects now.
     public func retryNow() {
-        guard let activeEndpoint, connectionState.isActive || isFailed else { return }
-        start(activeEndpoint)
+        guard let activeEndpoint, connectionState != .disconnected else { return }
+        // A session that was already reconnecting keeps doing so if this attempt
+        // fails too (TWS still restarting); only a fresh start fails fast.
+        var policy = IBReconnectPolicy.standard
+        if case .reconnecting = connectionState { policy.retriesFirstConnection = true }
+        start(activeEndpoint, policy: policy)
     }
 
     /// Called when the app returns to the foreground. iOS suspends sockets in the
@@ -74,18 +82,14 @@ public final class LumenstreamModel {
         if case .reconnecting = connectionState { retryNow() }
     }
 
-    private var isFailed: Bool {
-        if case .failed = connectionState { true } else { false }
-    }
-
-    private func start(_ endpoint: IBEndpoint) {
+    private func start(_ endpoint: IBEndpoint, policy: IBReconnectPolicy = .standard) {
         eventPump?.cancel()
         activeEndpoint = endpoint
         connectionState = .connecting
 
         eventPump = Task {
             do {
-                for try await event in await connection.sessions(to: endpoint) {
+                for try await event in await connection.sessions(to: endpoint, policy: policy) {
                     apply(event)
                 }
                 // A cancelled pump has been superseded by connect()/disconnect(),
@@ -135,7 +139,7 @@ public final class LumenstreamModel {
             Task { try? await connection.send(.requestMarketDataType(.delayed)) }
 
         case let .reconnecting(attempt, delay, reason):
-            connectionState = .reconnecting(attempt: attempt, retryAt: .now + delay.timeInterval, reason: reason)
+            connectionState = .reconnecting(attempt: attempt, retryAt: .now + delay.seconds, reason: reason)
 
         case let .managedAccounts(list):
             accounts = list
@@ -184,13 +188,6 @@ public final class LumenstreamModel {
         default:
             return String(describing: error)
         }
-    }
-}
-
-extension Duration {
-    fileprivate var timeInterval: TimeInterval {
-        let (seconds, attoseconds) = components
-        return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
     }
 }
 
