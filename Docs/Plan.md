@@ -90,8 +90,8 @@ work for anything else**, and **the main actor does nothing but apply small diff
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| **M0: Groundwork** ✅ | Package split, navigation shell, placeholders, IBKit handshake, tests | Builds warning-free; 11 tests green; launches on iOS 27 simulator |
-| **M1: Connected** | IB Phase 1 smoke test + Phase 2 plumbing, Connection screen polish, reconnect | Connect to TWS paper, see accounts and notices, survive a TWS restart |
+| **M0: Groundwork** ✅ | Package split, navigation shell, placeholders, IBKit handshake, tests | Builds warning-free; 13 tests green; launches on iOS 27 simulator |
+| **M1: Connected** 🚧 | IB Phase 1 smoke test + Phase 2 plumbing, Connection screen polish, reconnect | Connect to TWS paper, see accounts and notices, survive a TWS restart. Implemented and covered by loopback tests (restart included); the manual run against TWS paper is still open |
 | **M2: Watchlist** | IB Phase 3, Quote rows, reorder, zoom transition to detail | 20 symbols streaming delayed data, fewer than 1 row body evaluation per tick |
 | **M3: Portfolio & Dashboard** | IB Phase 4, glass tiles with morphing, allocation chart | Positions and P&L match TWS |
 | **M4: History & Activity** | IB Phase 5, charts, executions, search | Symbol detail chart with live updates |
@@ -105,3 +105,7 @@ work for anything else**, and **the main actor does nothing but apply small diff
 - Wire-protocol code lives only in IBKit, with a test per message layout.
 - Read-only by design: no order placement APIs are implemented, and the TWS API should be set to read-only.
 - Run `swift test` in `Packages/LumenstreamKit` before committing.
+- SwiftLint runs in strict mode (`.swiftlint.yml`, every finding is an error) as the app
+  target's first build phase. Run `swiftlint` from the repo root to lint the app and packages.
+- Apple's open-source packages (swift-async-algorithms, swift-collections) are fair game
+  when they replace hand-rolled code, e.g. `AsyncAlgorithms` for M2's tick coalescing.
